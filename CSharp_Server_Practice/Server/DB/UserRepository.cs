@@ -1,6 +1,6 @@
 ﻿using Microsoft.Data.Sqlite;
 
-namespace Server
+namespace Server.DB
 {
     class UserRepository
     {

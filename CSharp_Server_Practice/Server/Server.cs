@@ -1,145 +1,164 @@
 ﻿using System.Net;
 using System.Net.Sockets;
-using System.Text;
+using Server.Command;
+using Server.DB;
+using Server.Packet;
 
 namespace Server
 {
     class Server
     {
-        private readonly TcpListener _listener;
-        private readonly Dictionary<string, ChatUser> _usersByNickname = new Dictionary<string, ChatUser>();
-        private readonly Dictionary<string, ChatRoom> _rooms = new Dictionary<string, ChatRoom>();
+        public static Server Instance { get; private set; }
+
+        private readonly Socket _listener;
+        private readonly CommandDispatcher _dispatcher = new CommandDispatcher();
+        private readonly Dictionary<string, User> _usersByNickname = new Dictionary<string, User>();
+        private readonly Dictionary<Socket, User> _usersBySocket = new Dictionary<Socket, User>();
+        private readonly Dictionary<string, Room> _rooms = new Dictionary<string, Room>();
+
+        private readonly object _usersLocker = new object();
+        private readonly object _roomsLocker = new object();
+
+        public readonly UserRepository UserRepository;
+        public readonly FriendRepository FriendRepository;
 
         public Server(int port)
         {
-            _listener = new TcpListener(IPAddress.Any, port);
+            Instance = this;
+
+            _listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            _listener.Bind(new IPEndPoint(IPAddress.Any, port));
+            _listener.Listen(100);
+
+            UserRepository = new UserRepository("users.db");
+            FriendRepository = new FriendRepository("users.db");
         }
 
         public async Task StartAsync()
         {
-            _listener.Start();
-            Console.WriteLine("[서버] 서버 열림!");
+            Console.WriteLine($"[서버] {((_listener.LocalEndPoint as IPEndPoint)?.Port ?? 0)} 번 포트에서 서버 시작됨!");
 
-            while(true)
+            while (true)
             {
-                TcpClient client = await _listener.AcceptTcpClientAsync();
-                _ = HandleClientAsync(new ChatUser(client));
+                Socket client = await _listener.AcceptAsync();
+                Console.WriteLine($"[서버] 클라이언트 연결됨 : {client.RemoteEndPoint}");
+                _ = HandleClientAsync(client);
             }
         }
 
-        private async Task HandleClientAsync(ChatUser user)
+        private async Task HandleClientAsync(Socket socket)
         {
-            Console.WriteLine($"[서버] 새로운 클라이언트가 접속함!");
-            NetworkStream stream = user.Stream;
-            byte[] buffer = new byte[1024];
-            StringBuilder builder = new StringBuilder();
+            User user = new User(socket);
+            lock (_usersLocker)
+            {
+                _usersBySocket[socket] = user;
+            }
+
+            await PacketHelper.SendPacketAsync(socket, new ServerMessagePacket { Message = "SEND_NICKNAME" });
 
             try
             {
-                while(true)
+                while (true)
                 {
-                    int read = await stream.ReadAsync(buffer);
-                    if (read == 0) break;
-
-                    builder.Append(Encoding.UTF8.GetString(buffer, 0, read));
-
-                    while (builder.ToString().Contains('\n'))
-                    {
-                        string text = builder.ToString();
-                        int index = text.IndexOf('\n');
-                        string line = text[..index].Trim();
-                        builder.Remove(0, index + 1);
-
-                        if (!string.IsNullOrEmpty(line))
-                            await HandleCommand(user, line);
-                    }
+                    byte[] raw = await PacketHelper.ReceiveRawAsync(socket);
+                    await _dispatcher.DispatchAsync(user, raw);
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"[서버] 에러남! | {ex.Message}");
+                Console.WriteLine($"[서버] 클라이언트 연결 해제됨 : {socket.RemoteEndPoint}");
             }
             finally
             {
-                if (user.Room != null) user.Room.Leave(user);
-                if (user.Nickname != null) _usersByNickname.Remove(user.Nickname);
-
-                stream.Close();
-                user.Client.Close();
-
-                Console.WriteLine("[서버] 클라이언트가 접속 종료됨!");
+                DisconnectUser(user);
             }
         }
 
-        private async Task HandleCommand(ChatUser user, string line)
+        public void DisconnectUser(User user)
         {
-            if(line.StartsWith("/이름 "))
+            if (user == null) return;
+            
+            lock (_usersLocker)
             {
-                string nick = line[4..].Trim();
-                if(_usersByNickname.ContainsKey(nick))
+                if (user.Nickname != null && _usersByNickname.ContainsKey(user.Nickname))
                 {
-                    await user.SendAsync("닉네임이 중복됩니다!");
+                    _usersByNickname.Remove(user.Nickname);
+                    UserRepository.Logout(user.Nickname);
                 }
-                else
+                if (_usersBySocket.ContainsKey(user.Socket))
                 {
-                    user.Nickname = nick;
-                    _usersByNickname[nick] = user;
-                    await user.SendAsync($"닉네임이 {nick} 으로 설정되었습니다!");
+                    _usersBySocket.Remove(user.Socket);
                 }
             }
-            else if(line.StartsWith("/접속"))
+
+            if (user.Room != null)
             {
-                string name = line[4..].Trim();
-                if(!_rooms.TryGetValue(name, out var room))
+                user.Room.Leave(user);
+            }
+
+            try
+            {
+                user.Socket.Close();
+            }
+            catch { }
+
+            Console.WriteLine($"[서버] {user.Nickname ?? "(unknown)"} 에 대한 처리 완료!");
+        }
+
+        public bool TryRegisterNickname(User user, string nickname, out string reason)
+        {
+            reason = string.Empty;
+
+            if (string.IsNullOrEmpty(nickname))
+            {
+                reason = "Empty";
+
+                return false;
+            }
+
+            lock (_usersLocker)
+            {
+                if (_usersByNickname.ContainsKey(nickname))
                 {
-                    room = new ChatRoom(name);
+                    reason = "already_online";
+
+                    return false;
+                }
+
+                bool ok = UserRepository.TryLogin(nickname);
+                if(!ok)
+                {
+                    reason = "db_online";
+
+                    return false;
+                }
+
+                user.Nickname = nickname;
+                _usersByNickname[nickname] = user;
+
+                return true;
+            }
+        }
+
+        public bool TryGetUserByNick(string nickname, out User user)
+        {
+            lock (_usersLocker)
+            {
+                return _usersByNickname.TryGetValue(nickname, out user);
+            }
+        }
+
+        public Room GetOrCreateRoom(string name)
+        {
+            lock (_roomsLocker)
+            {
+                if(!_rooms.TryGetValue(name, out Room room))
+                {
+                    room = new Room(name);
                     _rooms[name] = room;
                 }
 
-                room.Join(user);
-            }
-            else if (line.StartsWith("/귓"))
-            {
-                string[] parts = line.Split(' ');
-                if (parts.Length < 3) return;
-                string nick = parts[1];
-                string message = parts[2];
-                if(_usersByNickname.TryGetValue(nick, out var target))
-                {
-                    await target.SendAsync($"[{user.Nickname} 님으로부터 온 귓속말] {message}");
-                    await user.SendAsync($"[{nick} 님에게 보낸 귓속말] {message}");
-                }
-            }
-            else if (line.StartsWith("/친구"))
-            {
-                string[] parts = line.Split(' ');
-                if (parts.Length < 2) return;
-
-                if (parts[1] == "추가" && parts.Length == 3)
-                {
-                    user.Friends.Add(parts[2]);
-                    await user.SendAsync($"{parts[2]} 님을 팔로우 중입니다!");
-                }
-                else if (parts[1] == "목록")
-                {
-                    await user.SendAsync($"친구 목록 : {string.Join(", ", user.Friends)}");
-                }
-                else if (parts[1] == "삭제" && parts.Length == 3)
-                {
-                    user.Friends.Remove(parts[2]);
-                    await user.SendAsync($"{parts[2]} 님을 팔로우 해제했습니다!");
-                }
-            }
-            else
-            {
-                if(user.Room != null)
-                {
-                    user.Room.Broadcast($"{user.Nickname} : {line}", user);
-                }
-                else
-                {
-                    await user.SendAsync("먼저 \"/접속 [방이름]\" 으로 방에 들어가주세요!");
-                }
+                return room;
             }
         }
     }

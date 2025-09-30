@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using Microsoft.Data.Sqlite;
 
-namespace Server
+namespace Server.DB
 {
     class FriendRepository
     {
