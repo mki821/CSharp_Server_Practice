@@ -31,6 +31,7 @@ namespace Client
 
             while(true)
             {
+                Console.Write("입력 : ");
                 string? line = Console.ReadLine();
                 if (string.IsNullOrEmpty(line)) continue;
 
