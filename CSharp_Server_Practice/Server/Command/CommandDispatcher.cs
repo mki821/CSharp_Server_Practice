@@ -18,7 +18,7 @@ namespace Server.Command
         public Task DispatchAsync(User user, byte[] rawData)
         {
             Dictionary<string, object> header = MessagePackSerializer.Deserialize<Dictionary<string, object>>(rawData);
-            if (!header.TryGetValue("Type", out var tObj)) 
+            if (!header.TryGetValue("Type", out var tObj))
                 return Task.CompletedTask;
 
             string type = tObj.ToString();
