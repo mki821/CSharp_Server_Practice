@@ -32,6 +32,12 @@ namespace Server
 
             UserRepository = new UserRepository("users.db");
             FriendRepository = new FriendRepository("users.db");
+
+            _dispatcher.Register("nickname", new NicknameCommand());
+            _dispatcher.Register("chat", new ChatCommand());
+            _dispatcher.Register("whisper", new WhisperCommand());
+            _dispatcher.Register("firend_request", new FriendRequestCommand());
+            _dispatcher.Register("join", new JoinCommand());
         }
 
         public async Task StartAsync()
@@ -80,7 +86,7 @@ namespace Server
             
             lock (_usersLocker)
             {
-                if (user.Nickname != null && _usersByNickname.ContainsKey(user.Nickname))
+                if(!string.IsNullOrEmpty(user.Nickname) && _usersByNickname.ContainsKey(user.Nickname))
                 {
                     _usersByNickname.Remove(user.Nickname);
                     UserRepository.Logout(user.Nickname);
@@ -91,16 +97,10 @@ namespace Server
                 }
             }
 
-            if (user.Room != null)
-            {
-                user.Room.Leave(user);
-            }
+            user.Room?.Leave(user);
 
-            try
-            {
-                user.Socket.Close();
-            }
-            catch { }
+            try { user.Socket.Shutdown(SocketShutdown.Both); } catch { }
+            try { user.Socket.Close(); } catch { }
 
             Console.WriteLine($"[서버] {user.Nickname ?? "(unknown)"} 에 대한 처리 완료!");
         }
@@ -111,7 +111,7 @@ namespace Server
 
             if (string.IsNullOrEmpty(nickname))
             {
-                reason = "Empty";
+                reason = "empty";
 
                 return false;
             }
@@ -152,7 +152,7 @@ namespace Server
         {
             lock (_roomsLocker)
             {
-                if(!_rooms.TryGetValue(name, out Room room))
+                if(!_rooms.TryGetValue(name, out Room? room))
                 {
                     room = new Room(name);
                     _rooms[name] = room;

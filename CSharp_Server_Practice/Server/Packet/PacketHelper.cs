@@ -1,4 +1,5 @@
-﻿using System.Net.Sockets;
+﻿using System.Buffers;
+using System.Net.Sockets;
 using MessagePack;
 
 namespace Server.Packet
@@ -16,23 +17,36 @@ namespace Server.Packet
 
         public static async Task<byte[]> ReceiveRawAsync(Socket socket)
         {
-            byte[] lengthBytes = new byte[4];
-            int raw = await socket.ReceiveAsync(lengthBytes.AsMemory(), SocketFlags.None);
-            if (raw == 0) throw new Exception("Connection Closed!");
+            byte[] buffer = new byte[4];
 
-            int length = BitConverter.ToInt32(lengthBytes, 0);
-            if (length <= 0) throw new Exception("Invalid Length!");
+            int got = await socket.ReceiveAsync(buffer.AsMemory(), SocketFlags.None);
+            if (got == 0) throw new Exception("Connection Closed!");
 
-            byte[] body = new byte[length];
+            int length = BitConverter.ToInt32(buffer);
+            if (length == 0) throw new Exception("Invalid Length!");
+
             int offset = 0;
-            while(offset < length)
-            {
-                int got = await socket.ReceiveAsync(body.AsMemory(offset, length - offset), SocketFlags.None);
-                if (got == 0) throw new Exception("Connection Closed!");
-                offset += got;
-            }
+            ArrayPool<byte> pool = ArrayPool<byte>.Shared;
+            byte[] body = pool.Rent(length);
 
-            return body;
+            try
+            {
+                while(offset < length)
+                {
+                    int receive = await socket.ReceiveAsync(body.AsMemory(offset, length - offset), SocketFlags.None);
+                    if (receive == 0) throw new Exception("Connection Closed!");
+                    offset += receive;
+                }
+
+                var exact = new byte[length];
+                Buffer.BlockCopy(body, 0, exact, 0, length);
+
+                return exact;
+            }
+            finally
+            {
+                pool.Return(body, true);
+            }
         }
     }
 }

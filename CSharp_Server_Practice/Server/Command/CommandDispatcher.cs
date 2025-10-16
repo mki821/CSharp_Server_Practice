@@ -4,7 +4,7 @@ namespace Server.Command
 {
     class CommandDispatcher
     {
-        private readonly Dictionary<string, Func<User, byte[], Task>> _handlers = new Dictionary<string, Func<User, byte[], Task>>();
+        private readonly Dictionary<string, Func<User, byte[], Task>> _handlers = new Dictionary<string, Func<User, byte[], Task>>(StringComparer.Ordinal);
 
         public void Register<T>(string type, ICommand<T> command)
         {
@@ -21,12 +21,14 @@ namespace Server.Command
             if (!header.TryGetValue("Type", out var tObj))
                 return Task.CompletedTask;
 
-            string type = tObj.ToString();
+            string type = tObj.ToString() ?? string.Empty;
 
             if(_handlers.TryGetValue(type, out var handler))
             {
                 return handler(user, rawData);
             }
+
+            Console.WriteLine($"[Dispatcher] 알 수 없는 타입 : {type}");
 
             return Task.CompletedTask;
         }

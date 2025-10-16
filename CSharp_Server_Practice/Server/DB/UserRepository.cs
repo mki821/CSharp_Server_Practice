@@ -14,7 +14,7 @@ namespace Server.DB
             connection.Open();
 
             SqliteCommand cmd = connection.CreateCommand();
-            cmd.CommandText = @"CREATE TABLE IF NOT EXISTS Users (Nickname TEXT PRIMARY KET, IsOnline INTEGER)";
+            cmd.CommandText = @"CREATE TABLE IF NOT EXISTS Users (Nickname TEXT PRIMARY KEY, IsOnline INTEGER)";
             cmd.ExecuteNonQuery();
         }
 

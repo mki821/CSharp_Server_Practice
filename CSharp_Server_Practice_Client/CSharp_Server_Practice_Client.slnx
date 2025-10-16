@@ -1,3 +1,6 @@
 ﻿<Solution>
+  <Project Path="MessagePack.csproj" />
   <Project Path="Assembly-CSharp.csproj" />
+  <Project Path="MessagePack.Annotations.csproj" />
+  <Project Path="MessagePack.UnityEditor.csproj" />
 </Solution>

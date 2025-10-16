@@ -2,6 +2,6 @@
 {
     interface ICommand<T>
     {
-        Task ExecuteAsync(User user, T packet);
+        public Task ExecuteAsync(User user, T packet);
     }
 }

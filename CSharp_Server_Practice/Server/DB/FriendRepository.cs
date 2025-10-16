@@ -1,6 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 
 namespace Server.DB
 {
@@ -16,8 +14,8 @@ namespace Server.DB
             connection.Open();
 
             SqliteCommand cmd = connection.CreateCommand();
-            cmd.CommandText = @"CREATE TABLE IS NOT EXIST Friends (
-                Id INTERGER PRIMARY KET AUTOINCREMENT,
+            cmd.CommandText = @"CREATE TABLE IF NOT EXISTS Friends (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 User1 TEXT NOT NULL,
                 User2 TEXT NOT NULL,
                 Status TEXT NOT NULL,
